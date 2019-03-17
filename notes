@@ -1,0 +1,3 @@
+conda update -n base -c defaults conda
+conda create -n mahjong python=2.7.15 anaconda tensorflow
+conda activate mahjong
