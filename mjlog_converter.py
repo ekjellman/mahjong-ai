@@ -29,6 +29,9 @@ class Tile(object):
   def __init__(self, num):
     self.num = num
 
+  def index(self):
+    return self.num / 4
+
   def __str__(self):
     return Tile.TILES[self.num / 4]
 
@@ -57,56 +60,64 @@ class Meld(object):
   def decode(cls, data):
     data = int(data)
     meld = Meld()
+    meld.data = data
     meld.fromPlayer = data & 0x3
     if data & 0x4:
-      meld.decodeChi(data)
+      meld.decodeChi()
     elif data & 0x18:
-      meld.decodePon(data)
+      meld.decodePon()
     elif data & 0x20:
-      meld.decodeNuki(data)
+      meld.decodeNuki()
     else:
-      meld.decodeKan(data)
+      meld.decodeKan()
     return meld
 
-  def __str__(self):
-    return "Meld type: %s   Tiles: %s" % (self.meld_type, " ".join(str(t) for t in self.tiles))
+  def __eq__(self, other):
+    return isinstance(other, Meld) and self.data == other.data
 
-  def decodeChi(self, data):
+  def __str__(self):
+    return ("%s, %s, %s" % (self.meld_type,
+                            " ".join(str(t) for t in self.tiles),
+                            self.called))
+
+  def decodeChi(self):
     self.meld_type = "chi"
-    t0, t1, t2 = (data >> 3) & 0x3, (data >> 5) & 0x3, (data >> 7) & 0x3
-    baseAndCalled = data >> 10
+    t0, t1, t2 = (self.data >> 3) & 0x3, (self.data >> 5) & 0x3, (self.data >> 7) & 0x3
+    baseAndCalled = self.data >> 10
     self.called = baseAndCalled % 3
     base = baseAndCalled // 3
     base = (base // 7) * 9 + base % 7
     self.tiles = Tile(t0 + 4 * (base + 0)), Tile(t1 + 4 * (base + 1)), Tile(t2 + 4 * (base + 2))
 
-  def decodePon(self, data):
-    t4 = (data >> 5) & 0x3
+  def decodePon(self):
+    t4 = (self.data >> 5) & 0x3
     t0, t1, t2 = ((1,2,3),(0,2,3),(0,1,3),(0,1,2))[t4]
-    baseAndCalled = data >> 9
+    baseAndCalled = self.data >> 9
     self.called = baseAndCalled % 3
     base = baseAndCalled // 3
-    if data & 0x8:
+    if self.data & 0x8:
       self.meld_type = "pon"
       self.tiles = Tile(t0 + 4 * base), Tile(t1 + 4 * base), Tile(t2 + 4 * base)
     else:
       self.meld_type = "chakan"
       self.tiles = Tile(t0 + 4 * base), Tile(t1 + 4 * base), Tile(t2 + 4 * base), Tile(t4 + 4 * base)
 
-  def decodeKan(self, data):
-    baseAndCalled = data >> 8
+  def decodeKan(self):
+    baseAndCalled = self.data >> 8
     if self.fromPlayer:
       self.called = baseAndCalled % 4
     else:
-      del self.fromPlayer
+      self.called = None
+      # del self.fromPlayer
     base = baseAndCalled // 4
     self.meld_type = "kan"
     self.tiles = Tile(4 * base), Tile(1 + 4 * base), Tile(2 + 4 * base), Tile(3 + 4 * base)
 
-  def decodeNuki(self, data):
-    del self.fromPlayer
+  def decodeNuki(self):
+    self.called = None
+    # del self.fromPlayer
     self.meld_type = "nuki"
-    self.tiles = Tile(data >> 8)
+    self.tiles = Tile(self.data >> 8)
 
 ###
 
@@ -126,108 +137,242 @@ class Hand(object):
     self.hand = None
     self.discards = []
     self.melds = []
+    self.riichi = False
 
   def initialize_hand(self, tile_string):
     self.hand = set(int(t) for t in tile_string.split(","))
     assert len(self.hand) == 13
 
+  def draw(self, tile):
+    self.hand.add(tile)
+    assert len(self.hand) + len(self.melds) * 3 == 14
+
+  def discard(self, tile):
+    self.hand.remove(tile)
+    self.discards.append(tile)
+    print self
+    print "Tenpai: ", self.is_tenpai()
+    assert len(self.hand) + len(self.melds) * 3 == 13
+    if self.riichi:
+      assert self.is_tenpai()
+
+  def declare_riichi(self):
+    # TODO: Assert tenpai
+    self.riichi = True
+
+  def meld(self, meld_object):
+    for i, tile in enumerate(meld_object.tiles):
+      tile_num = tile.num
+      if meld_object.called == i:
+        continue
+      self.hand.remove(tile.num)
+    self.melds.append(meld_object)
+
+  def is_tenpai(self):
+    # TODO: Kokushi, 7 pairs
+    # START HERE
+    counts = [0] * 34
+    for tile in self.hand:
+      counts[tile / 4] += 1
+    return self.tenpai_inner(counts, len(self.melds), 0)
+
+  @staticmethod
+  def tenpai_inner(counts, melds, pairs, start_index=0):
+    # Base cases
+    if melds == 4:  # Single wait on a pairing tile
+      assert sum(counts) == 1
+      return True
+    if melds == 3 and pairs == 1:
+      assert sum(counts) == 2
+      if any(count == 2 for count in counts):   # Incomplete triplet
+        return True
+      return Hand.incomplete_run(counts)
+    # Recursive cases
+    for meld_start in xrange(start_index, len(Tile.TILES)):
+      if counts[meld_start] >= 3:
+        # Try triplet
+        counts[meld_start] -= 3
+        if Hand.tenpai_inner(counts, melds + 1, pairs, meld_start): return True
+        counts[meld_start] += 3
+      if counts[meld_start] >= 2 and pairs == 0:
+        # Try pair
+        counts[meld_start] -= 2
+        if Hand.tenpai_inner(counts, melds, pairs + 1, meld_start): return True
+      if meld_start < 27 and meld_start % 9 <= 6:  # Suit, and value 0-6
+        # Try run
+        if counts[meld_start] >= 1 and counts[meld_start+1] >= 1 and counts[meld_start+2] >= 1:
+          counts[meld_start] -= 1
+          counts[meld_start+1] -= 1
+          counts[meld_start+2] -= 1
+          if Hand.tenpai_inner(counts, melds + 1, pairs, meld_start): return True
+          counts[meld_start] += 1
+          counts[meld_start+1] += 1
+          counts[meld_start+2] += 1
+    return False
+
+  @staticmethod
+  def incomplete_run(counts):
+    for i in xrange(len(counts)):
+      if counts[i] == 1:
+        if i >= 27: return False  # Honors can't be part of a run
+        value = (i % 9) + 1
+        if value > 8: return False  # Incomplete runs can't start with a 9
+        if counts[i + 1] == 1: return True
+        if value <= 7 and counts[i + 2] == 1: return True
+        return False
+    assert False  # Should only be run if sum(counts) is 2, and no element of
+                  # counts is 2
+
   def __str__(self):
     hand_string = " ".join(Tile.tile_str(t) for t in sorted(self.hand))
     discard_string = " ".join(Tile.tile_str(t) for t in self.discards)
     meld_string = " | ".join(str(m) for m in self.melds)
-    return "Hand: %s\nDiscards: %s\nMelds: %s\n" % (hand_string, discard_string, meld_string)
+    return "Hand: %s\nDiscards: %s\nMelds: %s" % (hand_string, discard_string, meld_string)
 
 class GameState(object):
   def __init__(self):
     self.hands = [Hand() for i in xrange(4)]
-    pass
+    self.dealer = None
+    self.dora = []
+    self.abort = False
+    self.finished = False
+
+  def __str__(self):
+    pieces = []
+    pieces.append("Dealer: %d" % self.dealer)
+    for i, hand in enumerate(self.hands):
+      pieces.append("Player %d:" % i)
+      pieces.append(str(hand))
+    return "\n".join(pieces)
+
+  def draw(self, player, tile):
+    self.hands[player].draw(tile)
+
+  def discard(self, player, tile):
+    self.hands[player].discard(tile)
+
+  def meld(self, player, meld_object):
+    self.hands[player].meld(meld_object)
+
+  def initialize_hand(self, player, hai):
+    self.hands[player].initialize_hand(hai)
+
+  def set_dealer(self, player):
+    self.dealer = player
+
+  def add_dora(self, tile):
+    self.dora.append(tile)
+
+  def declare_riichi(self, player):
+    self.hands[player].declare_riichi()
+
+  def agari(self, player, from_player, winning_hand, winning_melds):
+    # TODO: assert tenpai
+    if player != from_player:
+      self.hands[player].draw(self.hands[from_player].discards[-1])
+      finished_hand = set(int(t) for t in winning_hand.split(","))
+      assert finished_hand == self.hands[player].hand
+      melds = [Meld.decode(s) for s in winning_melds.split(",")] if winning_melds else []
+      for meld in melds:
+        assert meld in self.hands[player].melds
+    self.complete = True
+
+  def ryuukyoku(self, hands):
+    self.complete = True
+    # TODO: Assert tenpai
+    for player, hand in enumerate(hands):
+      if hand:
+        finished_hand = set(int(t) for t in hand.split(","))
+        assert finished_hand == self.hands[player].hand
+      else:
+        assert not self.hands[player].riichi
 
   #START HERE: Go through handle_elements, replacing every print with an update
   #            of the game state, noting ones we're skipping.
   #            Make a __str__ method for GameState
 
 def handle_elements(elements):
+  game_state = None
   for element in elements:
     if element.tag == "INIT":
-      print "Start of hand"
-      print "Points: ", element.attrib["ten"]
-      print "Hand 0: ", element.attrib["hai0"]
-      print "Hand 1: ", element.attrib["hai1"]
-      print "Hand 2: ", element.attrib["hai2"]
-      print "Hand 3: ", element.attrib["hai3"]
-      print "Dealer: ", element.attrib["oya"]
-      print "Seed  : ", element.attrib["seed"]
+      if game_state:
+        assert game_state.complete or game_state.abort
+      game_state = GameState()
+      # Skipping ten
+      game_state.initialize_hand(0, element.attrib["hai0"])
+      game_state.initialize_hand(1, element.attrib["hai1"])
+      game_state.initialize_hand(2, element.attrib["hai2"])
+      game_state.initialize_hand(3, element.attrib["hai3"])
+      game_state.set_dealer(int(element.attrib["oya"]))
       seed_info = element.attrib["seed"].split(",")
       round_num = int(seed_info[0])
       assert round_num % 4 == int(element.attrib["oya"])
     elif 84 <= ord(element.tag[0]) <= 87:  # T-W
       if element.tag == "TAIKYOKU":
-        print "Start of match"
-        print "Dealer: ", element.attrib["oya"]
         assert element.attrib["oya"] == "0"
       elif element.tag == "UN":
         if "dan" in element.attrib:
-          print "Player data:"
-          print "Name 0: ", element.attrib["n0"]
-          print "Name 1: ", element.attrib["n1"]
-          print "Name 2: ", element.attrib["n2"]
-          print "Name 3: ", element.attrib["n3"]
-          print "Dan   : ", element.attrib["dan"]
-          print "Rating: ", element.attrib["rate"]
-          print "Sexes : ", element.attrib["sx"]
+          # skipping dan, sx
+          for name in ("n0", "n1", "n2", "n3"):
+            if name not in element.attrib or not element.attrib[name]:
+              print "Missing name %s, Aborting.", name
+              game_state.abort = True
+              return
+          ratings = [float(r) for r in element.attrib["rate"].split(",")]
+          if min(ratings) < 2000.0:
+            game_state.abort = True
+            return
         else:
-          print "User connected: " % element.attrib
+          game_state.abort = True
+          return
       else:
         player = ord(element.tag[0]) - 84
         tile = int(element.tag[1:])
-        print "Player %d drew tile %d" % (player, tile)
+        game_state.draw(player, tile)
     elif 68 <= ord(element.tag[0]) <= 71:  # D-G
       if element.tag == "DORA":
-        print "New dora: ", element.attrib["hai"]
+        game_state.add_dora(int(element.attrib["hai"]))
       elif element.tag == "GO":
-        print "Room info"
-        print "Lobby type: ", element.attrib["type"]
-        print "Lobby number: ", element.attrib["lobby"] if "lobby" in element.attrib else "None"
+        pass
+        #print "Room info"
+        #print "Lobby type: ", element.attrib["type"]
+        #print "Lobby number: ", element.attrib["lobby"] if "lobby" in element.attrib else "None"
       else:
         player = ord(element.tag[0]) - 68
         tile = int(element.tag[1:])
-        print "Player %d discarded tile %d" % (player, tile)
+        game_state.discard(player, tile)
     elif element.tag == "SHUFFLE":
       continue   # Shuffle has no useful info for us
     elif element.tag == "N":
-      print "Player %d makes a meld" % int(element.attrib["who"])
-      print "Meld: %s %s" % (element.attrib["m"], bin(int(element.attrib["m"]) & 0xFFFF))
-      print "Decode: %s" % Meld.decode(element.attrib["m"])
+      player = int(element.attrib["who"])
+      meld_object = Meld.decode(element.attrib["m"])
+      game_state.meld(player, meld_object)
     elif element.tag == "AGARI":
-      print "Player %s wins" % element.attrib["who"]
-      if element.attrib["who"] == element.attrib["fromWho"]:
-        print "Tsumo"
-      else:
-        print "Ron from player %s" % element.attrib["fromWho"]
-        print "Tiles: ", element.attrib["hai"]
-        print "Waits: ", element.attrib["machi"]
-        print "Melds: ",
-        if "m" in element.attrib:
-          for m in element.attrib["m"].split(","):
-            print m, bin(int(m) & 0xFFFF)
-        # skipping ba, ten, yaku, doraHai, sc
+      # Skipping machi, ba, ten, yaku, doraHai, sc
+      winner = int(element.attrib["who"])
+      from_player = int(element.attrib["fromWho"])
+      winning_hand = element.attrib["hai"]
+      winning_melds = element.attrib["m"] if "m" in element.attrib else None
+      game_state.agari(winner, from_player, winning_hand, winning_melds)
     elif element.tag == "REACH":
       if element.attrib["step"] == "1":
-        print "Player %s declared riichi" % element.attrib["who"]
+        game_state.declare_riichi(int(element.attrib["who"]))
       elif element.attrib["step"] == "2":
-        print "Player paid 1000 points"
+        # print "Player paid 1000 points"
+        pass
       else:
         raise
     # START HERE (Ryuukyoku: Can also tell who is tenpai here)
     elif element.tag == "RYUUKYOKU":
-      print "Scores and changes: ", element.attrib["sc"]
-      print "Player 0 tiles: ", show_hand(element.attrib["hai0"]) if "hai0" in element.attrib else "noten"
-      print "Player 1 tiles: ", show_hand(element.attrib["hai1"]) if "hai1" in element.attrib else "noten"
-      print "Player 2 tiles: ", show_hand(element.attrib["hai2"]) if "hai2" in element.attrib else "noten"
-      print "Player 3 tiles: ", show_hand(element.attrib["hai3"]) if "hai3" in element.attrib else "noten"
-      # skipping ba
+      # Skipping sc, ba
+      hai0 = element.attrib["hai0"] if "hai0" in element.attrib else None
+      hai1 = element.attrib["hai1"] if "hai1" in element.attrib else None
+      hai2 = element.attrib["hai2"] if "hai2" in element.attrib else None
+      hai3 = element.attrib["hai3"] if "hai3" in element.attrib else None
+      game_state.ryuukyoku([hai0, hai1, hai2, hai3])
     elif element.tag == "BYE":
-      print "Player %s left" % element.attrib["who"]
+      game_state.abort = True
+      return
     else:
       print "UNHANDLED: ", element.tag, element.attrib
       raise ValueError("Could not parse file")
