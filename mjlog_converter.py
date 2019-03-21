@@ -17,8 +17,11 @@
 # Players melds
 # dora? dealer? Don't know.
 
-import xml.etree.cElementTree as ET
+import copy
+import os
+import random
 import sys
+import xml.etree.cElementTree as ET
 
 # Taken from
 # https://github.com/NegativeMjark/tenhou-log/blob/master/TenhouDecoder.py
@@ -55,6 +58,8 @@ class Tile(object):
     wd gd rd
   """.split()
 
+  TERMINALS = {0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33}
+
 class Meld(object):
   @classmethod
   def decode(cls, data):
@@ -79,6 +84,12 @@ class Meld(object):
     return ("%s, %s, %s" % (self.meld_type,
                             " ".join(str(t) for t in self.tiles),
                             self.called))
+
+  def contains_tile(self, tile):
+    tile_num = tile.num / 4
+    for t in self.tiles:
+      if t.num / 4 == tile_num: return True
+    return False
 
   def decodeChi(self):
     self.meld_type = "chi"
@@ -138,6 +149,7 @@ class Hand(object):
     self.discards = []
     self.melds = []
     self.riichi = False
+    self.last_play = None
 
   def initialize_hand(self, tile_string):
     self.hand = set(int(t) for t in tile_string.split(","))
@@ -150,8 +162,9 @@ class Hand(object):
   def discard(self, tile):
     self.hand.remove(tile)
     self.discards.append(tile)
-    print self
-    print "Tenpai: ", self.is_tenpai()
+    self.last_play = tile
+    #print self
+    #print "Tenpai: ", self.is_tenpai()
     assert len(self.hand) + len(self.melds) * 3 == 13
     if self.riichi:
       assert self.is_tenpai()
@@ -161,19 +174,51 @@ class Hand(object):
     self.riichi = True
 
   def meld(self, meld_object):
-    for i, tile in enumerate(meld_object.tiles):
-      tile_num = tile.num
-      if meld_object.called == i:
-        continue
-      self.hand.remove(tile.num)
-    self.melds.append(meld_object)
+    if meld_object.meld_type == "chakan":
+      # Find the pon we're upgrading
+      meld_index = None
+      for i, mo in enumerate(self.melds):
+        if mo.contains_tile(meld_object.tiles[0]):
+          meld_index = i
+          break
+      assert meld_index is not None
+      # Replace it with the new chakan
+      self.melds.pop(i)
+      self.melds.append(meld_object)
+      self.hand.remove(meld_object.tiles[3].num)  # Last tile in chakan is new
+      self.last_play = meld_object.tiles[3].num   # Can rob a chankan
+    else:
+      for i, tile in enumerate(meld_object.tiles):
+        tile_num = tile.num
+        if meld_object.called == i:
+          continue
+        self.hand.remove(tile.num)
+      self.melds.append(meld_object)
+
+  def kokushi_tenpai(self):
+    if len(self.hand) < 13: return False  # Must be closed
+    tiles = set()
+    for tile in self.hand:
+      if (tile / 4) in Tile.TERMINALS:
+        tiles.add(tile / 4)
+      else:
+        return False
+    return len(tiles) >= 12  # Have at least 12 unique terminals out of 13
+
+  def seven_pairs_tenpai(self, counts):
+    if len(self.hand) < 13: return False
+    pairs = 0
+    for count in counts:
+      if count == 2:
+        pairs += 1
+    return pairs == 6
 
   def is_tenpai(self):
-    # TODO: Kokushi, 7 pairs
-    # START HERE
+    if self.kokushi_tenpai(): return True
     counts = [0] * 34
     for tile in self.hand:
       counts[tile / 4] += 1
+    if self.seven_pairs_tenpai(counts): return True
     return self.tenpai_inner(counts, len(self.melds), 0)
 
   @staticmethod
@@ -198,6 +243,7 @@ class Hand(object):
         # Try pair
         counts[meld_start] -= 2
         if Hand.tenpai_inner(counts, melds, pairs + 1, meld_start): return True
+        counts[meld_start] += 2
       if meld_start < 27 and meld_start % 9 <= 6:  # Suit, and value 0-6
         # Try run
         if counts[meld_start] >= 1 and counts[meld_start+1] >= 1 and counts[meld_start+2] >= 1:
@@ -227,15 +273,27 @@ class Hand(object):
     hand_string = " ".join(Tile.tile_str(t) for t in sorted(self.hand))
     discard_string = " ".join(Tile.tile_str(t) for t in self.discards)
     meld_string = " | ".join(str(m) for m in self.melds)
-    return "Hand: %s\nDiscards: %s\nMelds: %s" % (hand_string, discard_string, meld_string)
+    tenpai_string = "Tenpai: %r   Riichi: %r" % (self.is_tenpai(), self.riichi)
+    return "Hand: %s\nDiscards: %s\nMelds: %s\n%s" % (hand_string, discard_string, meld_string, tenpai_string)
+
+  def nn_output(self):
+    output_list = [str(t / 4) for t in self.discards]
+    output_list.append("T" if self.riichi else "F")
+    return ",".join(output_list)
 
 class GameState(object):
   def __init__(self):
     self.hands = [Hand() for i in xrange(4)]
     self.dealer = None
     self.dora = []
-    self.abort = False
     self.finished = False
+
+  def nn_output(self):
+    lines = []
+    for h in self.hands:
+      lines.append(h.nn_output())
+    lines.append(",".join(str(h.is_tenpai())[0] for h in self.hands))
+    return "\n".join(lines)
 
   def __str__(self):
     pieces = []
@@ -269,35 +327,63 @@ class GameState(object):
   def agari(self, player, from_player, winning_hand, winning_melds):
     # TODO: assert tenpai
     if player != from_player:
-      self.hands[player].draw(self.hands[from_player].discards[-1])
+      self.hands[player].draw(self.hands[from_player].last_play)
       finished_hand = set(int(t) for t in winning_hand.split(","))
       assert finished_hand == self.hands[player].hand
       melds = [Meld.decode(s) for s in winning_melds.split(",")] if winning_melds else []
       for meld in melds:
         assert meld in self.hands[player].melds
-    self.complete = True
+    self.finished = True
 
-  def ryuukyoku(self, hands):
-    self.complete = True
+  def ryuukyoku(self, hands, kind=None):
+    self.finished = True
     # TODO: Assert tenpai
     for player, hand in enumerate(hands):
       if hand:
         finished_hand = set(int(t) for t in hand.split(","))
         assert finished_hand == self.hands[player].hand
       else:
-        assert not self.hands[player].riichi
+        # There are some cases where the tiles in the ryuukyoku tag are not
+        # a tenpai hand, and they're so rare I'm just not going to fix this
+        # assertion for them. (i.e.: double riichi into kyuushuu kyuuhai)
+        assert kind or not self.hands[player].riichi
 
-  #START HERE: Go through handle_elements, replacing every print with an update
-  #            of the game state, noting ones we're skipping.
-  #            Make a __str__ method for GameState
+def reservoir(held, current, count):
+  if held is None:
+    result = copy.deepcopy(current)
+  else:
+    if random.random() < (1.0 / count):
+      result = copy.deepcopy(current)
+    else:
+      result = held
+  return result
+
+def update_stats(game_state, player, stats):
+  draws = len(game_state.hands[player].discards)
+  melds = len(game_state.hands[player].melds)
+  opponent_riichi = sum(game_state.hands[x].riichi for x in (0, 1, 2, 3) if x != player)
+  noten, tenpai = stats.get((draws, melds, opponent_riichi), (0, 0))
+  in_tenpai = game_state.hands[player].is_tenpai()
+  if in_tenpai:
+    tenpai += 1
+  else:
+    noten += 1
+  stats[draws, melds, opponent_riichi] = (noten, tenpai)
 
 def handle_elements(elements):
   game_state = None
+  random_state = None
+  draw_count = 0
+  stats = {}   # Dictionary from (draws, melds, opponent riichi) -> (noten count, tenpai count)
+  collected_states = []
   for element in elements:
+    #print element.tag, element.attrib
     if element.tag == "INIT":
-      if game_state:
-        assert game_state.complete or game_state.abort
       game_state = GameState()
+      if random_state:
+        collected_states.append(random_state)
+      random_state = None
+      draw_count = 0
       # Skipping ten
       game_state.initialize_hand(0, element.attrib["hai0"])
       game_state.initialize_hand(1, element.attrib["hai1"])
@@ -315,19 +401,18 @@ def handle_elements(elements):
           # skipping dan, sx
           for name in ("n0", "n1", "n2", "n3"):
             if name not in element.attrib or not element.attrib[name]:
-              print "Missing name %s, Aborting.", name
-              game_state.abort = True
-              return
+              return "Aborted, missing name %s" % name, None, None
           ratings = [float(r) for r in element.attrib["rate"].split(",")]
           if min(ratings) < 2000.0:
-            game_state.abort = True
-            return
+            return "Aborted, minimum rating too low", None, None
         else:
-          game_state.abort = True
-          return
+          return "Aborted, no dan?", None, None
       else:
         player = ord(element.tag[0]) - 84
         tile = int(element.tag[1:])
+        draw_count += 1
+        random_state = reservoir(random_state, game_state, draw_count)
+        update_stats(game_state, player, stats)
         game_state.draw(player, tile)
     elif 68 <= ord(element.tag[0]) <= 71:  # D-G
       if element.tag == "DORA":
@@ -362,33 +447,88 @@ def handle_elements(elements):
         pass
       else:
         raise
-    # START HERE (Ryuukyoku: Can also tell who is tenpai here)
     elif element.tag == "RYUUKYOKU":
       # Skipping sc, ba
       hai0 = element.attrib["hai0"] if "hai0" in element.attrib else None
       hai1 = element.attrib["hai1"] if "hai1" in element.attrib else None
       hai2 = element.attrib["hai2"] if "hai2" in element.attrib else None
       hai3 = element.attrib["hai3"] if "hai3" in element.attrib else None
-      game_state.ryuukyoku([hai0, hai1, hai2, hai3])
+      kind = element.attrib["type"] if "type" in element.attrib else None
+      game_state.ryuukyoku([hai0, hai1, hai2, hai3], kind)
     elif element.tag == "BYE":
-      game_state.abort = True
-      return
+      return "Aborted, player disconnected", None, None
     else:
       print "UNHANDLED: ", element.tag, element.attrib
-      raise ValueError("Could not parse file")
+      return "Aborted, could not parse file", None, None
+  if random_state:
+    collected_states.append(random_state)
+  return "OK", collected_states, stats
 
+def handle_file(filename):
+  try:
+    elements = get_elements(filename)
+    result = handle_elements(elements)
+    return result
+  except ValueError as e:
+    print "COULD NOT HANDLE %s" % filename
+    print e
 
+def output_gamestates(file_handle, states):
+  for state in states:
+    output = state.nn_output()
+    file_handle.write(output)
+    file_handle.write("\n")
+
+def combine_stats(total, new_stats):
+  for key in new_stats:
+    noten, tenpai = new_stats[key]
+    total_noten, total_tenpai = total.get(key, (0, 0))
+    total_noten += noten
+    total_tenpai += tenpai
+    total[key] = (total_noten, total_tenpai)
+
+def output_stats(stats_output, total_stats):
+  for key in total_stats:
+    draws, melds, riichi = key
+    noten, tenpai = total_stats[key]
+    stats_output.write("%d,%d,%d,%d,%d" % (draws, melds, riichi, noten, tenpai))
+    stats_output.write("\n")
 
 if len(sys.argv) > 1:
-  filename = sys.argv[1]
+  arg = sys.argv[1]
 else:
-  filename = "2018010100gm-00a9-0000-0d318262.mjlog"
-try:
-  elements = get_elements(filename)
-  handle_elements(elements)
-except ValueError as e:
-  print "COULD NOT HANDLE %s" % filename
-  print e
-
-
+  arg = "2018010100gm-00a9-0000-0d318262.mjlog"
+if len(sys.argv) > 3:
+  stats_output = open(sys.argv[2], "w")
+  gamestate_output = open(sys.argv[3], "w")
+else:
+  stats_output, gamestate_output = None, None
+count = 0
+total_stats = {}
+if os.path.isdir(arg):
+  filenames = [f for f in os.listdir(arg) if os.path.isfile(os.path.join(arg, f))]
+  for i, f in enumerate(filenames):
+    if f.endswith("mjlog"):
+      filename = os.path.join(arg, f)
+      print "(%7d) Parsing %s" % (i, filename)
+      message, collected_states, stats = handle_file(filename)
+      if message == "OK":
+        count += 1
+        if gamestate_output:
+          output_gamestates(gamestate_output, collected_states)
+        combine_stats(total_stats, stats)
+      else:
+        print message
+    else:
+      print "Skipping %s" % f
+  if stats_output:
+    output_stats(stats_output, total_stats)
+elif os.path.isfile(arg):
+  message, collected_states, stats = handle_file(arg)
+  print collected_states
+  print stats
+  count += 1
+print "%d files parsed" % count
+if stats_output: stats_output.close()
+if gamestate_output: gamestate_output.close()
 
