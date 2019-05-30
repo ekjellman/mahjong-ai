@@ -5,28 +5,24 @@
 # or not. To create the data for this NN, we'll read logs from tenhou to get
 # a bunch of game states we can feed into a NN.
 
-# TODO:
-# Check tenpai using ryuukyoku
-# Check tenpai using reach
-# Get rid of all logs of three-player games
-# Get rid of games with players under a certain level
-# Get rid of games with disconnections?
-
 # Items needed for state:
 # Players discards
 # Players melds
 # dora? dealer? Don't know.
 
+import collections
 import copy
+import itertools
 import os
 import random
 import sys
 import xml.etree.cElementTree as ET
 
-# Taken from
+# Tile/Meld modified from
 # https://github.com/NegativeMjark/tenhou-log/blob/master/TenhouDecoder.py
-
 ###
+
+DEBUG = False
 
 class Tile(object):
   def __init__(self, num):
@@ -147,9 +143,11 @@ class Hand(object):
   def __init__(self):
     self.hand = None
     self.discards = []
+    self.tsumogiri = []
     self.melds = []
-    self.riichi = False
+    self.riichi = -1
     self.last_play = None
+    self.last_draw = None
 
   def initialize_hand(self, tile_string):
     self.hand = set(int(t) for t in tile_string.split(","))
@@ -157,21 +155,28 @@ class Hand(object):
 
   def draw(self, tile):
     self.hand.add(tile)
+    self.last_draw = tile
     assert len(self.hand) + len(self.melds) * 3 == 14
 
   def discard(self, tile):
     self.hand.remove(tile)
     self.discards.append(tile)
+    if self.last_draw is not None:
+      self.tsumogiri.append(tile == self.last_draw)
+    else:
+      self.tsumogiri.append(False)   # Called Chi/Pon/Kan/etc
+    assert len(self.discards) == len(self.tsumogiri)
     self.last_play = tile
+    self.last_draw = None
     #print self
     #print "Tenpai: ", self.is_tenpai()
     assert len(self.hand) + len(self.melds) * 3 == 13
-    if self.riichi:
+    if self.riichi != -1:
       assert self.is_tenpai()
 
   def declare_riichi(self):
     # TODO: Assert tenpai
-    self.riichi = True
+    self.riichi = len(self.discards)
 
   def meld(self, meld_object):
     if meld_object.meld_type == "chakan":
@@ -218,8 +223,13 @@ class Hand(object):
     counts = [0] * 34
     for tile in self.hand:
       counts[tile / 4] += 1
+    if len(self.hand) + len(self.melds) * 3 == 13:
+      if self.tenpai_inner(counts, len(self.melds), 0): return True
+      #if self.tenpai_inner(counts, 0, 0): return True
+    else:
+      return None  # TODO
     if self.seven_pairs_tenpai(counts): return True
-    return self.tenpai_inner(counts, len(self.melds), 0)
+    return False
 
   @staticmethod
   def tenpai_inner(counts, melds, pairs, start_index=0):
@@ -277,9 +287,17 @@ class Hand(object):
     return "Hand: %s\nDiscards: %s\nMelds: %s\n%s" % (hand_string, discard_string, meld_string, tenpai_string)
 
   def nn_output(self):
-    output_list = [str(t / 4) for t in self.discards]
-    output_list.append("T" if self.riichi else "F")
-    return ",".join(output_list)
+    discards = [str(t / 4) for t in self.discards]
+    meld_tiles = []
+    for meld in self.melds:
+      meld_tiles.extend(t.num/4 for t in meld.tiles)
+      while len(meld_tiles) % 4 != 0:
+        meld_tiles.append(-1)
+    discard_string = ",".join(discards)
+    meld_string = ",".join(str(x) for x in meld_tiles)
+    tsumogiri_string = ",".join("T" if x else "F" for x in self.tsumogiri)
+    return "%s|%d|%s|%s" % (",".join(discards), self.riichi, meld_string,
+                         tsumogiri_string)
 
 class GameState(object):
   def __init__(self):
@@ -346,7 +364,7 @@ class GameState(object):
         # There are some cases where the tiles in the ryuukyoku tag are not
         # a tenpai hand, and they're so rare I'm just not going to fix this
         # assertion for them. (i.e.: double riichi into kyuushuu kyuuhai)
-        assert kind or not self.hands[player].riichi
+        assert kind or self.hands[player].riichi == -1
 
 def reservoir(held, current, count):
   if held is None:
@@ -361,7 +379,7 @@ def reservoir(held, current, count):
 def update_stats(game_state, player, stats):
   draws = len(game_state.hands[player].discards)
   melds = len(game_state.hands[player].melds)
-  opponent_riichi = sum(game_state.hands[x].riichi for x in (0, 1, 2, 3) if x != player)
+  opponent_riichi = sum(game_state.hands[x].riichi != -1 for x in (0, 1, 2, 3) if x != player)
   noten, tenpai = stats.get((draws, melds, opponent_riichi), (0, 0))
   in_tenpai = game_state.hands[player].is_tenpai()
   if in_tenpai:
@@ -377,7 +395,8 @@ def handle_elements(elements):
   stats = {}   # Dictionary from (draws, melds, opponent riichi) -> (noten count, tenpai count)
   collected_states = []
   for element in elements:
-    #print element.tag, element.attrib
+    # TODO: Make debug flag
+    if DEBUG: print element.tag, element.attrib
     if element.tag == "INIT":
       game_state = GameState()
       if random_state:
@@ -494,6 +513,12 @@ def output_stats(stats_output, total_stats):
     stats_output.write("%d,%d,%d,%d,%d" % (draws, melds, riichi, noten, tenpai))
     stats_output.write("\n")
 
+"""
+tenpai_counts = Hand.generate_tenpai_counts()
+print len(tenpai_counts)
+sys.exit(1)
+"""
+
 if len(sys.argv) > 1:
   arg = sys.argv[1]
 else:
@@ -511,24 +536,90 @@ if os.path.isdir(arg):
     if f.endswith("mjlog"):
       filename = os.path.join(arg, f)
       print "(%7d) Parsing %s" % (i, filename)
-      message, collected_states, stats = handle_file(filename)
-      if message == "OK":
-        count += 1
-        if gamestate_output:
-          output_gamestates(gamestate_output, collected_states)
-        combine_stats(total_stats, stats)
-      else:
-        print message
+      try:
+        message, collected_states, stats = handle_file(filename)
+        if message == "OK":
+          count += 1
+          if gamestate_output:
+            output_gamestates(gamestate_output, collected_states)
+          combine_stats(total_stats, stats)
+        else:
+          print message
+      except AssertionError:
+        print "ASSERTION FAILED"
+      except ET.ParseError:
+        print "XML PARSE FAILED"
     else:
       print "Skipping %s" % f
   if stats_output:
     output_stats(stats_output, total_stats)
 elif os.path.isfile(arg):
   message, collected_states, stats = handle_file(arg)
-  print collected_states
-  print stats
   count += 1
 print "%d files parsed" % count
 if stats_output: stats_output.close()
 if gamestate_output: gamestate_output.close()
+
+"""
+hand = Hand.tenhou_string_to_hand(sys.argv[1])
+print hand
+"""
+"""
+  def shanten(self):
+    counts = [0] * 34
+    for tile in self.hand:
+      counts[tile / 4] += 1
+    if len(self.hand) < 13:
+      best = len(self.hand)
+    else:
+      best = kokushi_shanten(self)
+      best = min(best, seven_pairs_shanten(counts))
+    return best
+
+  def kokushi_shanten(self):
+    assert len(self.hand) >= 13
+    tiles = []
+    for tile in self.hand:
+      if (tile / 4) in Tile.TERMINALS:
+        tiles.append(tile / 4)
+    tile_set = set(tiles)
+    return 13 - min(len(tile_set) + 1, len(tiles))
+
+  @staticmethod
+  def seven_pairs_shanten(counts):
+    pairs = 0
+    for count in counts:
+      if count >= 2: pairs += 1
+    return 6 - pairs
+
+  @staticmethod
+  def tenhou_string_to_hand(s):
+    # TODO: Handle reds
+    hand_tiles = []
+    current = []
+    for c in s:
+      if c in "smp":
+        for number in current:
+          tile_str = number + c
+          tile_index = Tile.TILES.index(tile_str)
+          assert tile_index != -1
+          hand_tiles.append(tile_index)
+        current = []
+      elif c == "z":
+        for number in current:
+          hand_tiles.append(int(number) + 27 - 1)
+        current = []
+      else:
+        current.append(c)
+    assert not current
+    counts = collections.Counter(hand_tiles)
+    result = Hand()
+    result.hand = set()
+    for tile in counts:
+      assert counts[tile] <= 4
+      for i in xrange(counts[tile]):
+        result.hand.add(tile * 4 + i)
+    print result.hand
+    return result
+"""
 
