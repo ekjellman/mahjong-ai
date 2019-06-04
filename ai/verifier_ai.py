@@ -31,6 +31,9 @@ class Action(object):
     self.inputs = inputs
     self.output = output
 
+  def __str__(self):
+    return "Action: %s %s %s" % (self.function_name, self.inputs, self.output)
+
 class VerifierAI(BaseAI):
   """
   AI used to verify the correctness of the game server.
@@ -122,6 +125,7 @@ class VerifierAI(BaseAI):
       a boolean, True if we should call this kan, False otherwise.
     """
     # TODO: Not sure these parameters are what we should do.
+    # TODO: The action may say should_call_meld, just verify and go on
     raise NotImplemented()
 
   def should_call_meld(self, tile, enemy_player):
@@ -133,4 +137,14 @@ class VerifierAI(BaseAI):
     Returns:
       None for no meld, or two tiles (0-135 integers) to meld with.
     """
-    return None, None
+    # TODO: The action will have the meld, but we'll have to verify and
+    #       figure out the correct return here.
+    raise NotImplemented()
+
+  def should_call_ryuukyoku(self):
+    """
+    Called when it is possible to call a ryuukyoku due to 9 terminals.
+    Returns:
+      True if we should call ryuukyoku, False otherwise.
+    """
+    raise NotImplemented()

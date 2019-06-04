@@ -90,6 +90,14 @@ class BaseAI(object):
       tile: an integer, 0-135, representing a tile.
       enemy_player: an integer, 0-3, representing which player discarded.
     Returns:
-      None for no meld, or two tiles (0-135 integers) to meld with.
+      None, None for no meld, or two tiles (0-135 integers) to meld with.
     """
-    return None, None
+    raise NotImplemented()
+
+  def should_call_ryuukyoku(self):
+    """
+    Called when it is possible to call a ryuukyoku due to 9 terminals.
+    Returns:
+      True if we should call ryuukyoku, False otherwise.
+    """
+    raise NotImplemented()
