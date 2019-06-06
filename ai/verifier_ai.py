@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from base_ai import BaseAI
+from ai.base_ai import BaseAI
 import logging
 
 class Action(object):
