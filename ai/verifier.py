@@ -1,5 +1,6 @@
 from ai.verifier_ai import Action
-from server.server import Wall
+from gamestate.gamestate import Wall
+from server.server import Server
 import logging
 import argparse
 import xml.etree.cElementTree as ET
@@ -134,10 +135,23 @@ if __name__ == "__main__":
       raise ValueError("Invalid log level: %s" % args.loglevel)
   else:
     level = logging.WARNING
+  logging.basicConfig(format='%(asctime)s.%(msecs)d [%(filename)s:%(lineno)d] %(levelname).1s: %(message)s',
+    datefmt='%y%m%d:%H%M%S',
+    level=level)
   logging.basicConfig(level=level)
 
+  logging.info("Verifying %s" % args.filename)
+
   action_lists, walls = get_actions_and_walls(args.filename)
+  # TODO: try/catch so we can do multiple files
+  s = Server(None, walls)
+  s.start_play()
+  #logging.warning("%s could not be verified" % args.filename)
+  raise e
+
+  """
   for x in action_lists[0]:
     print x
   for x in walls:
     print x
+  """

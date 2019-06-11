@@ -44,20 +44,18 @@ class VerifierAI(BaseAI):
   order of the tiles, etc). If the server is correct, we should be able to
   duplicate the results from the game.
   """
-  def __init__(self, player, gamestate, actions):
+  def __init__(self, player, actions):
     """
     Initialize the AI for the current match. This is only called once per
     hanchan.
     Args:
       player: an int (0-3) indicating which player this is.
-      gamestate: a GameState object.
       actions: a list of Action objects. Not all function calls will be in this
                list; for example there might be calls to should_call_meld not in
                the list. In those cases, it is assumed we do nothing / return
                False.
     """
     self.player = player
-    self.gamestate = gamestate
     self.actions = actions
 
   def discard_tile(self):
@@ -69,10 +67,13 @@ class VerifierAI(BaseAI):
     """
     raise NotImplemented()
 
-  def start_hanchan(self):
+  def start_hanchan(self, gamestate):
     """
     Called at the start of a match.
+    Args:
+      gamestate: a GameState object.
     """
+    #self.gamestate = gamestate
     raise NotImplemented()
 
   def start_hand(self):
