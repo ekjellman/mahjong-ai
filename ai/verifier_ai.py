@@ -57,6 +57,12 @@ class VerifierAI(BaseAI):
     """
     self.player = player
     self.actions = actions
+    logging.debug("Verifier %d initialized" % self.player)
+
+  @staticmethod
+  def log_and_raise(s):
+    logging.error(s)
+    raise ValueError(s)
 
   def discard_tile(self):
     """
@@ -73,14 +79,25 @@ class VerifierAI(BaseAI):
     Args:
       gamestate: a GameState object.
     """
-    #self.gamestate = gamestate
-    raise NotImplemented()
+    self.gamestate = gamestate
+    logging.debug("Player %d start_hanchan" % self.player)
 
   def start_hand(self):
     """
     Called at the start of an individual hand.
     """
-    raise NotImplemented()
+    logging.debug("Player %d start_hand" % self.player)
+    action = self.actions.popleft()
+    logging.debug("Next action: %s" % action)
+    if action.function_name != "start_hand":
+      self.log_and_raise("Player %d unexpected action %s" % (self.player, action))
+    tag = "hai%d" % self.player
+    input_hand = set(int(x) for x in action.inputs[tag].split(","))
+    gamestate_hand = set(self.gamestate.hands[self.player])
+    logging.debug("Hand in gamestate: %s" % gamestate_hand)
+    logging.debug("Hand in mjlog: %s" % input_hand)
+    if input_hand != gamestate_hand:
+      self.log_and_raise("Hand incorrect")
 
   def hand_finished(self):
     """
@@ -94,7 +111,13 @@ class VerifierAI(BaseAI):
     Args:
       tile: an int from 0-135 of the drawn tile
     """
-    raise NotImplemented()
+    logging.debug("Player %d draw_tile %d" % self.player, tile)
+    action = self.actions.popleft()
+    logging.debug("Next action: %s" % action)
+    if action.function_name != "draw_tile":
+      self.log_and_raise("Player %d unexpected action %s" % (self.player, action))
+    if tile != action.inputs["tile"]:
+      self.log_and_raise("Tile incorrect")
 
   def should_call_win(self, tile, enemy_seat):
     """

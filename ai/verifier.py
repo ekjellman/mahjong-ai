@@ -1,9 +1,10 @@
-from ai.verifier_ai import Action
+from ai.verifier_ai import Action, VerifierAI
 from gamestate.gamestate import Wall
 from server.server import Server
 import logging
 import argparse
 import xml.etree.cElementTree as ET
+import collections
 
 def start_wall(attribs):
   """
@@ -23,7 +24,7 @@ def start_wall(attribs):
   wall = Wall()
   for hand in ("hai0", "hai1", "hai2", "hai3"):
     tiles = [int(x) for x in attribs[hand].split(",")]
-    wall.main_wall += tiles
+    wall.main_wall.extend(tiles)
   wall.dora_indicators.append(int(attribs["seed"].split(",")[-1]))
   return wall
 
@@ -47,7 +48,7 @@ def get_actions_and_walls(filename):
   """
   # TODO: Make copies of actions, in case verifier_ai wanted to modify?
   # TODO: Break this out into more functions.
-  actions = [[] for _ in range(4)]
+  actions = [collections.deque() for _ in range(4)]
   walls = []
   xml_tree = ET.parse(filename)
   root = xml_tree.getroot()
@@ -143,11 +144,11 @@ if __name__ == "__main__":
   logging.info("Verifying %s" % args.filename)
 
   action_lists, walls = get_actions_and_walls(args.filename)
+  players = [VerifierAI(i, action_lists[i]) for i in xrange(4)]
   # TODO: try/catch so we can do multiple files
-  s = Server(None, walls)
+  s = Server(players, walls)
   s.start_play()
   #logging.warning("%s could not be verified" % args.filename)
-  raise e
 
   """
   for x in action_lists[0]:
