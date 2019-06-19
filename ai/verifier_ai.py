@@ -71,7 +71,12 @@ class VerifierAI(BaseAI):
       an int, from 0-135, of which tile to discard from its hand.
       This int should be in the player's hand.
     """
-    raise NotImplemented()
+    logging.debug("Player %d discard_tile" % (self.player))
+    action = self.actions.popleft()
+    logging.debug("Next action: %s" % action)
+    if action.function_name != "discard_tile":
+      self.log_and_raise("Player %d unexpected action %s" % (self.player, action))
+    return action.output
 
   def start_hanchan(self, gamestate):
     """
@@ -103,7 +108,7 @@ class VerifierAI(BaseAI):
     """
     Called at the end of a hand, either by agari or ryuukyoku.
     """
-    raise NotImplemented()
+    raise NotImplementedError
 
   def draw_tile(self, tile):
     """
@@ -111,7 +116,7 @@ class VerifierAI(BaseAI):
     Args:
       tile: an int from 0-135 of the drawn tile
     """
-    logging.debug("Player %d draw_tile %d" % self.player, tile)
+    logging.debug("Player %d draw_tile %d" % (self.player, tile))
     action = self.actions.popleft()
     logging.debug("Next action: %s" % action)
     if action.function_name != "draw_tile":
@@ -127,7 +132,7 @@ class VerifierAI(BaseAI):
     Returns:
       a boolean, True if we should declare a win, False otherwise.
     """
-    raise NotImplemented()
+    raise NotImplementedError
 
   def should_call_riichi(self):
     """
@@ -135,7 +140,7 @@ class VerifierAI(BaseAI):
     Returns:
       a boolean, True if we should declare riichi, False otherwise
     """
-    raise NotImplemented()
+    raise NotImplementedError
 
   def should_call_kan(self, tile, open_kan, from_riichi=False):
     """
@@ -150,7 +155,7 @@ class VerifierAI(BaseAI):
     """
     # TODO: Not sure these parameters are what we should do.
     # TODO: The action may say should_call_meld, just verify and go on
-    raise NotImplemented()
+    raise NotImplementedError
 
   def should_call_meld(self, tile, enemy_player):
     """
@@ -163,7 +168,7 @@ class VerifierAI(BaseAI):
     """
     # TODO: The action will have the meld, but we'll have to verify and
     #       figure out the correct return here.
-    raise NotImplemented()
+    raise NotImplementedError
 
   def should_call_ryuukyoku(self):
     """
@@ -171,4 +176,4 @@ class VerifierAI(BaseAI):
     Returns:
       True if we should call ryuukyoku, False otherwise.
     """
-    raise NotImplemented()
+    raise NotImplementedError

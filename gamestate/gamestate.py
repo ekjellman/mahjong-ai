@@ -3,6 +3,7 @@ import random
 import collections
 
 # TODO: Once this works for one file, start a test suite.
+# TODO: Make sure each function has some debug logging.
 
 class GameInfo(object):
   """
@@ -21,7 +22,7 @@ class GameInfo(object):
     self.data = data
 
   def __str__(self):
-    return "Info: %s, %s, %s" % (self.info_type, self.player, self.data)
+    return "Info: info_type: %s  player: %s  data: %s" % (self.info_type, self.player, self.data)
 
 class Wall(object):
   def __init__(self):
@@ -86,9 +87,11 @@ class GameState(object):
       self.wall_generator = self.wall_iter.next
     else:
       self.wall_generator = Wall.next_wall
+    self.discards = [[] for _ in xrange(4)]
     self.hands = None
     self.terminal = False
     self.current_action = None
+    self.current_player = None
 
   def get_round_name(self):
     wind = ("East", "South", "West", "North")[self.wind]
@@ -118,6 +121,7 @@ class GameState(object):
       logging.debug(self.wall)
       for info in self.play_hand():
         yield info
+        # TODO: Check for hand terminal conditions
     yield self.set_action(GameInfo("start_hand", None, None))
 
   def play_hand(self):
@@ -128,15 +132,51 @@ class GameState(object):
       logging.debug("Player %d hand: %s" % (player, self.hands[player]))
     yield self.set_action(GameInfo("start_hand", None, None))
     # In turn, players draw a tile. If possible, they may tsumo.
-    current_player = self.kyoku
+    self.current_player = self.kyoku
     while len(self.wall.main_wall) > 0:
       next_tile = self.wall.draw_tile()
-      yield self.set_action(GameInfo("draw_tile", current_player, next_tile))
-      self.hands[current_player].append(next_tile)
-      if self.hand_complete(current_player, None):
-        yield self.set_action(GameInfo("can_tsumo", current_player, None))
-      # start here: discard tile, check for ron
+      # Draw and tsumo check
+      yield self.set_action(GameInfo("draw_tile", self.current_player, next_tile))
+      self.hands[self.current_player].append(next_tile)
+      if self.hand_complete(self.current_player, None):
+        yield self.set_action(GameInfo("can_tsumo", self.current_player, None))
+      # Discard and ron/naki check
+      yield self.set_action(GameInfo("discard_tile", self.current_player, None))
+      discard = self.discards[self.current_player][-1]
+      # TODO: Consider caching these?
+      for check in ("can_ron", "can_kan", "can_pon", "can_chi"):
+        for player in xrange(4):
+          if player == self.current_player: continue
+          func = getattr(self, check)
+          if func(player, self.discards[self.current_player][-1]):
+            yield self.set_action(GameInfo(check, player, discard))
+
+      self.current_player = (self.current_player + 1) % 4
     self.terminal = True
+
+  def can_chi(self, player, tile):
+    # Return False if player is wrong
+    # START HERE: naki checks
+    return False
+
+  def can_pon(self, player, tile):
+    return False
+
+  def can_kan(self, player, tile):
+    return False
+
+  def can_ron(self, player, tile):
+    return False
+
+  def discard_tile(self, player, tile):
+    """
+    Discards a tile from the given player's hand
+    """
+    logging.debug("Discard tile: player: %d  tile: %d" % (player, tile))
+    assert tile in self.hands[player]
+    assert player == self.current_player
+    self.hands[player].remove(tile)
+    self.discards[player].append(tile)
 
   def hand_complete(self, player, discarded_tile):
     # TODO: Remember to consider furiten. If tsumo, the last tile in the hand is

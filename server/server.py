@@ -16,6 +16,11 @@ class Server(object):
       if info.info_type == "start_hand":
         for player in self.players:
           player.start_hand()
+      elif info.info_type == "draw_tile":
+        self.players[info.player].draw_tile(info.data)
+      elif info.info_type == "discard_tile":
+        tile = self.players[info.player].discard_tile()
+        self.gamestate.discard_tile(info.player, tile)
       # Start here: Handle the draw_tile action, pass it to the verifier AI
       #             Then on to discard
 
