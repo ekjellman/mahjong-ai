@@ -1,5 +1,5 @@
 from ai.verifier_ai import Action, VerifierAI
-from gamestate.gamestate import Wall
+from gamestate.gamestate import Wall, Tile
 from server.server import Server
 import logging
 import argparse
@@ -23,9 +23,9 @@ def start_wall(attribs):
   """
   wall = Wall()
   for hand in ("hai0", "hai1", "hai2", "hai3"):
-    tiles = [int(x) for x in attribs[hand].split(",")]
+    tiles = [Tile(int(x)) for x in attribs[hand].split(",")]
     wall.main_wall.extend(tiles)
-  wall.dora_indicators.append(int(attribs["seed"].split(",")[-1]))
+  wall.dora_indicators.append(Tile(int(attribs["seed"].split(",")[-1])))
   return wall
 
 def get_actions_and_walls(filename):
@@ -64,7 +64,7 @@ def get_actions_and_walls(filename):
       for player in xrange(4):
         actions[player].append(action)
       if "doraHaiUra" in element.attrib:
-        uradora = [int(x) for x in element.attrib["doraHaiUra"].split(",")]
+        uradora = [Tile(int(x)) for x in element.attrib["doraHaiUra"].split(",")]
         current_wall.uradora_indicators = uradora
       current_wall.fill()
       walls.append(current_wall)
@@ -75,7 +75,7 @@ def get_actions_and_walls(filename):
       pass # TODO: return None for insufficient rating?
     elif element.tag[0] in "TUVW":  # Draw a tile
       player = ord(element.tag[0]) - 84   # ord("T") = 84
-      tile = int(element.tag[1:])
+      tile = Tile(int(element.tag[1:]))
       actions[player].append(Action("draw_tile", {"tile": tile}, None))
       last_draw = player
       if kan_draw_next:
@@ -84,7 +84,7 @@ def get_actions_and_walls(filename):
       else:
         current_wall.main_wall.append(tile)
     elif element.tag == "DORA":
-      current_wall.dora_indicators.append(int(element.attrib["hai"]))
+      current_wall.dora_indicators.append(Tile(int(element.attrib["hai"])))
       if last_draw == last_meld_player:
         # If the person who drew last called this kan, it's a self-kan, and the
         # next tile drawn will be a kan draw, so we need to put that in the wall

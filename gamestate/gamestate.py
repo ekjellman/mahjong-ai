@@ -1,9 +1,132 @@
+# coding: utf-8
+
 import logging
 import random
 import collections
 
 # TODO: Once this works for one file, start a test suite.
 # TODO: Make sure each function has some debug logging.
+
+class Meld(object):
+  @classmethod
+  def decode(cls, data):
+    data = int(data)
+    meld = Meld()
+    meld.data = data
+    meld.fromPlayer = data & 0x3
+    if data & 0x4:
+      meld.decodeChi()
+    elif data & 0x18:
+      meld.decodePon()
+    elif data & 0x20:
+      meld.decodeNuki()
+    else:
+      meld.decodeKan()
+    return meld
+
+  def __eq__(self, other):
+    return isinstance(other, Meld) and self.data == other.data
+
+  def __str__(self):
+    return ("%s, %s, %s" % (self.meld_type,
+                            " ".join(str(t.num) for t in self.tiles),
+                            self.called))
+
+  def contains_tile(self, tile):
+    tile_num = tile.num / 4
+    for t in self.tiles:
+      if t.num / 4 == tile_num: return True
+    return False
+
+  def decodeChi(self):
+    self.meld_type = "chi"
+    t0, t1, t2 = (self.data >> 3) & 0x3, (self.data >> 5) & 0x3, (self.data >> 7) & 0x3
+    baseAndCalled = self.data >> 10
+    self.called = baseAndCalled % 3
+    base = baseAndCalled // 3
+    base = (base // 7) * 9 + base % 7
+    self.tiles = Tile(t0 + 4 * (base + 0)), Tile(t1 + 4 * (base + 1)), Tile(t2 + 4 * (base + 2))
+
+  def decodePon(self):
+    t4 = (self.data >> 5) & 0x3
+    t0, t1, t2 = ((1,2,3),(0,2,3),(0,1,3),(0,1,2))[t4]
+    baseAndCalled = self.data >> 9
+    self.called = baseAndCalled % 3
+    base = baseAndCalled // 3
+    if self.data & 0x8:
+      self.meld_type = "pon"
+      self.tiles = Tile(t0 + 4 * base), Tile(t1 + 4 * base), Tile(t2 + 4 * base)
+    else:
+      self.meld_type = "chakan"
+      self.tiles = Tile(t0 + 4 * base), Tile(t1 + 4 * base), Tile(t2 + 4 * base), Tile(t4 + 4 * base)
+
+  def decodeKan(self):
+    baseAndCalled = self.data >> 8
+    if self.fromPlayer:
+      self.called = baseAndCalled % 4
+    else:
+      self.called = None
+      # del self.fromPlayer
+    base = baseAndCalled // 4
+    self.meld_type = "kan"
+    self.tiles = Tile(4 * base), Tile(1 + 4 * base), Tile(2 + 4 * base), Tile(3 + 4 * base)
+
+  def decodeNuki(self):
+    self.called = None
+    # del self.fromPlayer
+    self.meld_type = "nuki"
+    self.tiles = Tile(self.data >> 8)
+
+class Tile(object):
+  def __init__(self, num):
+    self.num = num
+    self.index = num / 4
+    self.string = Tile.tile_str(num)
+    self.suit = self.string[1]
+    self.value = self.string[0]
+    if num >= 108:
+      self.number = None
+      self.honor = True
+    else:
+      self.number = int(self.value)
+      self.honor = False
+
+  def __str__(self):
+    return self.string
+
+  def __int__(self):
+    return self.num
+
+  def __repr__(self):
+    return "Tile(%d)" % self.num
+
+  def __hash__(self):
+    return self.num
+
+  def __eq__(self, other):
+    return isinstance(other, Tile) and self.num == other.num
+
+  @staticmethod
+  def tile_str(tile_num):
+    return Tile.TILES[tile_num / 4]
+
+  UNICODE_TILES = """
+    🀐 🀑 🀒 🀓 🀔 🀕 🀖 🀗 🀘
+    🀙 🀚 🀛 🀜 🀝 🀞 🀟 🀠 🀡
+    🀇 🀈 🀉 🀊 🀋 🀌 🀍 🀎 🀏
+    🀀 🀁 🀂 🀃
+    🀆 🀅 🀄
+  """.split()
+
+  TILES = """
+    1s 2s 3s 4s 5s 6s 7s 8s 9s
+    1p 2p 3p 4p 5p 6p 7p 8p 9p
+    1m 2m 3m 4m 5m 6m 7m 8m 9m
+    ew sw ww nw
+    wd gd rd
+  """.split()
+
+  TERMINALS = {0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33}
 
 class GameInfo(object):
   """
@@ -22,7 +145,7 @@ class GameInfo(object):
     self.data = data
 
   def __str__(self):
-    return "Info: info_type: %s  player: %s  data: %s" % (self.info_type, self.player, self.data)
+    return "Info: info_type: %s  player: %s  data: %r" % (self.info_type, self.player, self.data)
 
 class Wall(object):
   def __init__(self):
@@ -37,7 +160,7 @@ class Wall(object):
 
   @staticmethod
   def next_wall():
-    tiles = range(136)
+    tiles = [Tile(x) for x in xrange(136)]
     random.shuffle(tiles)
     wall = Wall()
     wall.main_wall = collections.deque(tiles[:122])
@@ -52,7 +175,7 @@ class Wall(object):
     return self.main_wall.popleft()
 
   def fill(self):
-    all_tiles = set(range(136))
+    all_tiles = set(Tile(x) for x in xrange(136))
     used_tiles = set(self.main_wall)
     used_tiles.update(self.kan_draws)
     used_tiles.update(self.dora_indicators)
@@ -89,6 +212,7 @@ class GameState(object):
       self.wall_generator = Wall.next_wall
     self.discards = [[] for _ in xrange(4)]
     self.hands = None
+    self.melds = None
     self.terminal = False
     self.current_action = None
     self.current_player = None
@@ -127,6 +251,7 @@ class GameState(object):
   def play_hand(self):
     # Give initial hands
     self.hands = [[] for _ in xrange(4)]
+    self.melds = [[] for _ in xrange(4)]
     for player in xrange(4):
       self.hands[player] = self.draw_hand()
       logging.debug("Player %d hand: %s" % (player, self.hands[player]))
@@ -136,6 +261,7 @@ class GameState(object):
     while len(self.wall.main_wall) > 0:
       next_tile = self.wall.draw_tile()
       # Draw and tsumo check
+      # TODO: kan
       yield self.set_action(GameInfo("draw_tile", self.current_player, next_tile))
       self.hands[self.current_player].append(next_tile)
       if self.hand_complete(self.current_player, None):
@@ -148,21 +274,33 @@ class GameState(object):
         for player in xrange(4):
           if player == self.current_player: continue
           func = getattr(self, check)
-          if func(player, self.discards[self.current_player][-1]):
-            yield self.set_action(GameInfo(check, player, discard))
-
+          if func(player, discard):
+            data = {"from": self.current_player, "tile": discard}
+            yield self.set_action(GameInfo(check, player, data))
       self.current_player = (self.current_player + 1) % 4
     self.terminal = True
 
+  # TODO: Convert everything to using tile objects
   def can_chi(self, player, tile):
-    # Return False if player is wrong
-    # START HERE: naki checks
+    # Only next player can chi
+    if (self.current_player + 1) % 4 != player: return False
+    if tile.honor: return False  # Can't chi winds or dragons
+    suit = tile.suit
+    number = tile.number
+    hand_numbers = set(x.number for x in self.hands[player] if x.suit == suit)
+    if number + 1 in hand_numbers and number + 2 in hand_numbers: return True
+    if number - 1 in hand_numbers and number + 1 in hand_numbers: return True
+    if number - 2 in hand_numbers and number - 1 in hand_numbers: return True
     return False
 
   def can_pon(self, player, tile):
+    count = sum(1 for x in self.hands[player] if x.index == tile.index)
+    if count >= 2: return True
     return False
 
   def can_kan(self, player, tile):
+    count = sum(1 for x in self.hands[player] if x.index == tile.index)
+    if count >= 3: return True
     return False
 
   def can_ron(self, player, tile):
@@ -173,10 +311,11 @@ class GameState(object):
     Discards a tile from the given player's hand
     """
     logging.debug("Discard tile: player: %d  tile: %d" % (player, tile))
-    assert tile in self.hands[player]
+    t = Tile(tile)
+    assert t in self.hands[player]
     assert player == self.current_player
-    self.hands[player].remove(tile)
-    self.discards[player].append(tile)
+    self.hands[player].remove(t)
+    self.discards[player].append(t)
 
   def hand_complete(self, player, discarded_tile):
     # TODO: Remember to consider furiten. If tsumo, the last tile in the hand is

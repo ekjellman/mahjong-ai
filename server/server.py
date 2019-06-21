@@ -21,8 +21,13 @@ class Server(object):
       elif info.info_type == "discard_tile":
         tile = self.players[info.player].discard_tile()
         self.gamestate.discard_tile(info.player, tile)
-      # Start here: Handle the draw_tile action, pass it to the verifier AI
-      #             Then on to discard
+      elif info.info_type in ("can_chi", "can_pon", "can_kan"):
+        from_player = info.data["from"]
+        tile = info.data["tile"]
+        kind = info.info_type[-3:]
+        meld = self.players[info.player].should_call_meld(tile, from_player, kind)
+        logging.debug("Received: %s" % meld)
+        # START HERE: Call chi/pon/kan on the gamestate object, and continue
 
 
     # Make the gamestate save the action it returns, then verify/assert in its

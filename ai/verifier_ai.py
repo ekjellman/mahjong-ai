@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from ai.base_ai import BaseAI
+from gamestate.gamestate import Tile, Meld
 import logging
 
 class Action(object):
@@ -97,7 +98,7 @@ class VerifierAI(BaseAI):
     if action.function_name != "start_hand":
       self.log_and_raise("Player %d unexpected action %s" % (self.player, action))
     tag = "hai%d" % self.player
-    input_hand = set(int(x) for x in action.inputs[tag].split(","))
+    input_hand = set(Tile(int(x)) for x in action.inputs[tag].split(","))
     gamestate_hand = set(self.gamestate.hands[self.player])
     logging.debug("Hand in gamestate: %s" % gamestate_hand)
     logging.debug("Hand in mjlog: %s" % input_hand)
@@ -157,18 +158,37 @@ class VerifierAI(BaseAI):
     # TODO: The action may say should_call_meld, just verify and go on
     raise NotImplementedError
 
-  def should_call_meld(self, tile, enemy_player):
+  def should_call_meld(self, tile, enemy_player, kind):
     """
     Called when it is possible to chi or pon.
     Args:
-      tile: an integer, 0-135, representing a tile.
+      tile: a Tile object, representing the tile discarded by another player
       enemy_player: an integer, 0-3, representing which player discarded.
+      kind: a string, "chi", "pon", or "kan"
     Returns:
-      None for no meld, or two tiles (0-135 integers) to meld with.
+      None for no meld, or a gamestate.Meld object
     """
     # TODO: The action will have the meld, but we'll have to verify and
     #       figure out the correct return here.
-    raise NotImplementedError
+    logging.debug("Player %d should_call_meld %d" % (self.player, tile))
+    action = self.actions.popleft()
+    logging.debug("Next action: %s" % action)
+    if action.function_name != "should_call_meld":
+      logging.debug("Next action is not a meld, declining.")
+      self.actions.appendleft(action)
+      return None
+    meld = Meld.decode(action.inputs["meld"])
+    logging.debug("Meld is %s" % meld)
+    if kind != meld.meld_type:
+      logging.debug("Wrong type of meld, declining")
+      self.actions.appendleft(action)
+      return None
+    if any(tile == x for x in meld.tiles):
+      return meld
+    else:
+      logging.debug("Tile not in meld, declining")
+      self.actions.appendleft(action)
+      return None
 
   def should_call_ryuukyoku(self):
     """
