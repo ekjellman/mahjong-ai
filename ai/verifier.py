@@ -1,5 +1,5 @@
 from ai.verifier_ai import Action, VerifierAI
-from gamestate.gamestate import Wall, Tile
+from gamestate.gamestate import Wall, Tile, Meld
 from server.server import Server
 import logging
 import argparse
@@ -85,11 +85,6 @@ def get_actions_and_walls(filename):
         current_wall.main_wall.append(tile)
     elif element.tag == "DORA":
       current_wall.dora_indicators.append(Tile(int(element.attrib["hai"])))
-      if last_draw == last_meld_player:
-        # If the person who drew last called this kan, it's a self-kan, and the
-        # next tile drawn will be a kan draw, so we need to put that in the wall
-        # correctly. TODO: Do this from the meld object?
-        kan_draw_next = True
     elif element.tag == "GO":
       pass # TODO: return None for bad lobby types.
     elif element.tag[0] in "DEFG":  # Discard a tile
@@ -107,6 +102,9 @@ def get_actions_and_walls(filename):
       last_meld_player = player
       meld = int(element.attrib["m"])
       actions[player].append(Action("should_call_meld", {"meld": meld}, None))
+      meld_object = Meld.decode(meld)
+      if meld_object.meld_type in ("kan", "chakan"):
+        kan_draw_next = True
     elif element.tag == "INIT":
       action = Action("start_hand", element.attrib, None)
       for player in xrange(4):

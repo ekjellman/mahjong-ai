@@ -6,8 +6,12 @@ import collections
 
 # TODO: Once this works for one file, start a test suite.
 # TODO: Make sure each function has some debug logging.
+# TODO: Make sure that all of the functions the server calls to affect
+#       gamestate (discard, melding, etc) check that self.current_action are
+#       correct
 
 class Meld(object):
+  # TODO: Credit this function, fix style issues
   @classmethod
   def decode(cls, data):
     data = int(data)
@@ -26,6 +30,9 @@ class Meld(object):
 
   def __eq__(self, other):
     return isinstance(other, Meld) and self.data == other.data
+
+  def __ne__(self, other):
+    return not self.__eq__(other)
 
   def __str__(self):
     return ("%s, %s, %s" % (self.meld_type,
@@ -106,6 +113,9 @@ class Tile(object):
   def __eq__(self, other):
     return isinstance(other, Tile) and self.num == other.num
 
+  def __ne__(self, other):
+    return not self.__eq__(other)
+
   @staticmethod
   def tile_str(tile_num):
     return Tile.TILES[tile_num / 4]
@@ -138,14 +148,17 @@ class GameInfo(object):
     player: An int, 0-3, if the info is for one player, None if for all.
     data: Any necessary data for this GameInfo
   """
+  action_count = 0
 
   def __init__(self, info_type, player, data):
     self.info_type = info_type
     self.player = player
     self.data = data
+    self.action_id = GameInfo.action_count
+    GameInfo.action_count += 1
 
   def __str__(self):
-    return "Info: info_type: %s  player: %s  data: %r" % (self.info_type, self.player, self.data)
+    return "Info (%d): info_type: %s  player: %s  data: %r" % (self.action_id, self.info_type, self.player, self.data)
 
 class Wall(object):
   def __init__(self):
@@ -168,6 +181,12 @@ class Wall(object):
     wall.dora_indicators = tiles[126:131]
     wall.uradora_indicators = tiles[131:136]
     return wall
+
+  def kan_draw_tile(self):
+    logging.debug("Kan wall draw")
+    if len(self.kan_draws) == 0:
+      raise ValueError("Cannot draw from empty kan wall")
+    return self.kan_draws.pop(0)
 
   def draw_tile(self):
     if len(self.main_wall) == 0:
@@ -216,6 +235,9 @@ class GameState(object):
     self.terminal = False
     self.current_action = None
     self.current_player = None
+    self.melded = False  # A meld was just called
+    self.kan = False  # A kan was just called
+    self.action_id = 0
 
   def get_round_name(self):
     wind = ("East", "South", "West", "North")[self.wind]
@@ -249,6 +271,7 @@ class GameState(object):
     yield self.set_action(GameInfo("start_hand", None, None))
 
   def play_hand(self):
+    # TODO: Try to simplify this. Probably turn some stuff into functions.
     # Give initial hands
     self.hands = [[] for _ in xrange(4)]
     self.melds = [[] for _ in xrange(4)]
@@ -259,25 +282,30 @@ class GameState(object):
     # In turn, players draw a tile. If possible, they may tsumo.
     self.current_player = self.kyoku
     while len(self.wall.main_wall) > 0:
-      next_tile = self.wall.draw_tile()
-      # Draw and tsumo check
-      # TODO: kan
-      yield self.set_action(GameInfo("draw_tile", self.current_player, next_tile))
-      self.hands[self.current_player].append(next_tile)
-      if self.hand_complete(self.current_player, None):
-        yield self.set_action(GameInfo("can_tsumo", self.current_player, None))
+      if (not self.melded) or self.kan:  # Need to draw a tile
+        if self.kan:
+          next_tile = self.wall.kan_draw_tile()
+        else:
+          next_tile = self.wall.draw_tile()
+        # Draw and tsumo check
+        yield self.set_action(GameInfo("draw_tile", self.current_player, next_tile))
+        self.hands[self.current_player].append(next_tile)
+        if self.hand_complete(self.current_player, None):
+          yield self.set_action(GameInfo("can_tsumo", self.current_player, None))
+      self.melded, self.kan = False, False
       # Discard and ron/naki check
       yield self.set_action(GameInfo("discard_tile", self.current_player, None))
       discard = self.discards[self.current_player][-1]
       # TODO: Consider caching these?
       for check in ("can_ron", "can_kan", "can_pon", "can_chi"):
         for player in xrange(4):
-          if player == self.current_player: continue
+          if self.melded or player == self.current_player: continue
           func = getattr(self, check)
           if func(player, discard):
             data = {"from": self.current_player, "tile": discard}
             yield self.set_action(GameInfo(check, player, data))
-      self.current_player = (self.current_player + 1) % 4
+      if not self.melded:
+        self.current_player = (self.current_player + 1) % 4
     self.terminal = True
 
   # TODO: Convert everything to using tile objects
@@ -316,6 +344,23 @@ class GameState(object):
     assert player == self.current_player
     self.hands[player].remove(t)
     self.discards[player].append(t)
+
+  def meld(self, player, meld_object):
+    logging.debug("Meld: player: %d  meld: %s" % (player, meld_object))
+    for tile in meld_object.tiles:
+      if tile in self.hands[player]:
+        self.hands[player].remove(tile)
+      else:
+        discard = self.discards[self.current_player][-1]
+        if tile != discard:
+          raise ValueError("Meld is incorrect")
+    self.melds[player].append(meld_object)
+    self.current_player = player
+    self.melded = True
+    if meld_object.meld_type == "kan":
+      self.kan = True
+    # START HERE: Need to handle dead wall draw after kan
+
 
   def hand_complete(self, player, discarded_tile):
     # TODO: Remember to consider furiten. If tsumo, the last tile in the hand is

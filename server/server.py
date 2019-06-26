@@ -26,7 +26,9 @@ class Server(object):
         tile = info.data["tile"]
         kind = info.info_type[-3:]
         meld = self.players[info.player].should_call_meld(tile, from_player, kind)
-        logging.debug("Received: %s" % meld)
+        logging.debug("Received Meld: %s" % meld)
+        if meld is not None:
+          self.gamestate.meld(info.player, meld)
         # START HERE: Call chi/pon/kan on the gamestate object, and continue
 
 
