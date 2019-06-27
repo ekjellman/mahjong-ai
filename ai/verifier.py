@@ -60,6 +60,9 @@ def get_actions_and_walls(filename):
     logging.debug("Element: %s" % element.tag)
     logging.debug("Attributes: %s" % element.attrib)
     if element.tag == "AGARI":
+      winner = int(element.attrib["who"])
+      win_action = Action("should_call_win", element.attrib, True)
+      actions[winner].append(win_action)
       action = Action("hand_finished", element.attrib, None)
       for player in xrange(4):
         actions[player].append(action)

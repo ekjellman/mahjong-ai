@@ -9,6 +9,7 @@ import collections
 # TODO: Make sure that all of the functions the server calls to affect
 #       gamestate (discard, melding, etc) check that self.current_action are
 #       correct
+# TODO: Add assertions to verify correctness
 
 class Meld(object):
   # TODO: Credit this function, fix style issues
@@ -238,6 +239,7 @@ class GameState(object):
     self.melded = False  # A meld was just called
     self.kan = False  # A kan was just called
     self.action_id = 0
+    self.hand_finished = False
 
   def get_round_name(self):
     wind = ("East", "South", "West", "North")[self.wind]
@@ -291,7 +293,9 @@ class GameState(object):
         yield self.set_action(GameInfo("draw_tile", self.current_player, next_tile))
         self.hands[self.current_player].append(next_tile)
         if self.hand_complete(self.current_player, None):
-          yield self.set_action(GameInfo("can_tsumo", self.current_player, None))
+          yield self.set_action(GameInfo("can_tsumo", self.current_player,
+                                         {"tile": None}))
+          if self.hand_finished: raise StopIteration
       self.melded, self.kan = False, False
       # Discard and ron/naki check
       yield self.set_action(GameInfo("discard_tile", self.current_player, None))
@@ -363,16 +367,67 @@ class GameState(object):
 
 
   def hand_complete(self, player, discarded_tile):
-    # TODO: Remember to consider furiten. If tsumo, the last tile in the hand is
-    #       the new one.
+    # TODO: Check for furiten. Does not apply to tsumos.
+    #       Remember: If a hand has multiple waits, and any of them are in the
+    #                 discards, it is furiten
+    # TODO: Check for temporary furiten.
+    # TODO: Check for yaku. We can do this after the scoring function is done.
+    # TODO: Figure out a way to test this.
     """
       Determine if the given player's hand is complete.
       Args:
         player: int, a player number 0-3
-        discarded_tile: Either None if checking for a ron, or an int 0-135
-                        representing a tile if checking for a tsumo.
+        discarded_tile: Either None if checking for a tsumo, or an int 0-135
+                        representing a tile if checking for a ron.
       Returns:
         A boolean, True if this hand can be completed.
     """
+    counts = [0] * 34
+    for tile in self.hands[player]:
+      counts[tile.index] += 1
+    if discarded_tile is not None:
+      counts[discarded_tile.index] += 1
+    melds = len(self.melds[player])
+    assert sum(counts) % 3 == 2  # should be a pair and n melds
+    assert 4 - melds == sum(counts) / 3
+    result = GameState.hand_complete_inner(counts, melds, 0)
+    logging.debug("hand_complete:  player: %d  discarded_tile: %r  result: %r" %
+                  (player, discarded_tile, result))
+    return result
+
+  @staticmethod
+  def hand_complete_inner(counts, melds, pairs, index=0):
+    # TODO: Might make this a generator of possible ways to complete?
+    if melds == 4 and pairs == 1:
+      assert sum(counts) == 0
+      return True
+    for i in xrange(index, 34):
+      # pairs
+      if pairs == 0 and counts[i] >= 2:
+        counts[i] -= 2
+        result = GameState.hand_complete_inner(counts, melds, pairs + 1, i)
+        counts[i] += 2
+        if result: return result
+      # triples
+      if melds < 4 and counts[i] >= 3:
+        counts[i] -= 3
+        result = GameState.hand_complete_inner(counts, melds + 1, pairs, i)
+        counts[i] += 3
+        if result: return result
+      # runs
+      if i >= 25: continue  # Honor tile or 8m 9m (which can't start a run)
+      value = (i % 9) + 1
+      if value <= 8 and counts[i] > 0 and counts[i+1] > 0 and counts[i+2] > 0:
+        counts[i] -= 1
+        counts[i+1] -= 1
+        counts[i+2] -= 1
+        result = GameState.hand_complete_inner(counts, melds + 1, pairs, i)
+        counts[i] += 1
+        counts[i+1] += 1
+        counts[i+2] += 1
+        if result: return result
     return False
 
+  def agari(self, player):
+    # TODO: Checks (both of player and hand)
+    self.hand_finished = True

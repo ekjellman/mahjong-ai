@@ -109,6 +109,7 @@ class VerifierAI(BaseAI):
     """
     Called at the end of a hand, either by agari or ryuukyoku.
     """
+    # TODO: Checks of values from agari/ryuukyoku attribs
     raise NotImplementedError
 
   def draw_tile(self, tile):
@@ -129,11 +130,18 @@ class VerifierAI(BaseAI):
     """
     Called when a tile is discarded that we can declare a win off of.
     This include chankan.
-    If enemy_seat is our seat, it is a Tsumo.
+    If enemy_seat is our seat, it is a Tsumo. (tile is None for a tsumo).
     Returns:
       a boolean, True if we should declare a win, False otherwise.
     """
-    raise NotImplementedError
+    logging.debug("Player %d should_call_win %r" % (self.player, tile))
+    action = self.actions.popleft()
+    logging.debug("Next action: %s" % action)
+    if action.function_name != "should_call_win":
+      logging.debug("Next action is not a win, declining.")
+      self.actions.appendleft(action)
+      return False
+    return True
 
   def should_call_riichi(self):
     """
