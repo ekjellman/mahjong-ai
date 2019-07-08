@@ -259,17 +259,18 @@ class GameState(object):
     return action
 
   def play(self):
-    try:
-      self.wall = self.wall_generator()
-    except StopIteration:
-      logging.critical("No hands left in generator.")
-      raise ValueError("Wall Generator ran out of hands")
     while not self.game_over():
+      try:
+        self.wall = self.wall_generator()
+      except StopIteration:
+        logging.critical("No hands left in generator.")
+        raise ValueError("Wall Generator ran out of hands")
       logging.info("Starting %s" % self.get_round_name())
+      self.hand_finished = False
       logging.debug(self.wall)
       for info in self.play_hand():
         yield info
-        # TODO: Check for hand terminal conditions
+      yield self.set_action(GameInfo("hand_finished", None, None))
     yield self.set_action(GameInfo("start_hand", None, None))
 
   def play_hand(self):
@@ -297,6 +298,7 @@ class GameState(object):
                                          {"tile": None}))
           if self.hand_finished: raise StopIteration
       self.melded, self.kan = False, False
+      # START HERE: Implement riichi
       # Discard and ron/naki check
       yield self.set_action(GameInfo("discard_tile", self.current_player, None))
       discard = self.discards[self.current_player][-1]
@@ -308,6 +310,7 @@ class GameState(object):
           if func(player, discard):
             data = {"from": self.current_player, "tile": discard}
             yield self.set_action(GameInfo(check, player, data))
+          if self.hand_finished: raise StopIteration
       if not self.melded:
         self.current_player = (self.current_player + 1) % 4
     self.terminal = True
@@ -336,7 +339,7 @@ class GameState(object):
     return False
 
   def can_ron(self, player, tile):
-    return False
+    return self.hand_complete(player, tile)
 
   def discard_tile(self, player, tile):
     """
@@ -363,7 +366,6 @@ class GameState(object):
     self.melded = True
     if meld_object.meld_type == "kan":
       self.kan = True
-    # START HERE: Need to handle dead wall draw after kan
 
 
   def hand_complete(self, player, discarded_tile):
@@ -391,8 +393,9 @@ class GameState(object):
     assert sum(counts) % 3 == 2  # should be a pair and n melds
     assert 4 - melds == sum(counts) / 3
     result = GameState.hand_complete_inner(counts, melds, 0)
-    logging.debug("hand_complete:  player: %d  discarded_tile: %r  result: %r" %
-                  (player, discarded_tile, result))
+    if result:
+      logging.debug("hand_complete:  player: %d  discarded_tile: %r" %
+                  (player, discarded_tile))
     return result
 
   @staticmethod
@@ -428,6 +431,22 @@ class GameState(object):
         if result: return result
     return False
 
+  def advance_round(self, player):
+    # TODO: CORRECT terminal checks. Notably:
+    # -- Check for tobu
+    # -- Check if someone has a given score (30000?) to win
+    if player == self.kyoku:
+      logging.debug("Dealer won hand, not advancing")
+    else:
+      self.kyoku += 1
+      if self.kyoku == 4:
+        self.wind += 1
+        if self.wind >= 2:
+          self.terminal = True
+        self.kyoku = 0
+
   def agari(self, player):
     # TODO: Checks (both of player and hand)
     self.hand_finished = True
+    logging.debug("agari: Player %d" % player)
+    self.advance_round(player)

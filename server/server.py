@@ -16,6 +16,9 @@ class Server(object):
       if info.info_type == "start_hand":
         for player in self.players:
           player.start_hand()
+      elif info.info_type == "hand_finished":
+        for player in self.players:
+          player.hand_finished()
       elif info.info_type == "draw_tile":
         self.players[info.player].draw_tile(info.data)
       elif info.info_type == "discard_tile":

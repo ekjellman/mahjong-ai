@@ -119,6 +119,14 @@ def get_actions_and_walls(filename):
     elif element.tag == "RYUUKYOKU":
       if "type" in element.attrib and element.attrib["type"] == "yao9":
         actions[last_draw].append(Action("should_call_ryuukyoku", None, True))
+      elif "type" not in element.attrib:
+        # TODO: Copying from AGARI?
+        action = Action("hand_finished", element.attrib, None)
+        for player in xrange(4):
+          actions[player].append(action)
+        current_wall.fill()
+        walls.append(current_wall)
+        current_wall = None
     elif element.tag == "SHUFFLE":
       pass
     else:
@@ -143,17 +151,17 @@ if __name__ == "__main__":
   logging.basicConfig(level=level)
 
   logging.info("Verifying %s" % args.filename)
-
+  action_lists, walls = get_actions_and_walls(args.filename)
   action_lists, walls = get_actions_and_walls(args.filename)
   players = [VerifierAI(i, action_lists[i]) for i in xrange(4)]
   # TODO: try/catch so we can do multiple files
   s = Server(players, walls)
   s.start_play()
   #logging.warning("%s could not be verified" % args.filename)
-
-  """
-  for x in action_lists[0]:
+"""
+  #for x in action_lists[0]:
+  #  print x
+  #for x in walls:
     print x
-  for x in walls:
-    print x
-  """
+    print "***"
+""" 

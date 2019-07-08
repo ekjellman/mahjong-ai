@@ -109,8 +109,12 @@ class VerifierAI(BaseAI):
     """
     Called at the end of a hand, either by agari or ryuukyoku.
     """
+    logging.debug("Player %d hand_finished" % self.player)
     # TODO: Checks of values from agari/ryuukyoku attribs
-    raise NotImplementedError
+    action = self.actions.popleft()
+    logging.debug("Next action: %s" % action)
+    if action.function_name != "hand_finished":
+      self.log_and_raise("Player %d unexpected action %s" % (self.player, action))
 
   def draw_tile(self, tile):
     """
